@@ -8,7 +8,7 @@ Monadic parsing in Lean, following the paper of Hutton and Meijer.
 A related implementation for character buffers (due to Gabriel Ebner) is in data.buffer.
 -/
 
-import tactic category.traversable tactic.slice
+import tactic category.traversable tactic.slice fol
 
 namespace char
 
@@ -235,6 +235,8 @@ meta def token {α} (p : parser_tactic α) : parser_tactic α := p <* space
 meta def symbol : string → parser_tactic string := token ∘ str
 
 meta def apply {α} (p : parser_tactic α) : string → tactic (α × string) := (space *> p).run
+
+
 
 section tests
 

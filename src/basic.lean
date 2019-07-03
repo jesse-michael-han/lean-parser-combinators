@@ -8,15 +8,23 @@ Monadic parsing in Lean, following the paper of Hutton and Meijer.
 A related implementation for character buffers (due to Gabriel Ebner) is in data.buffer.
 -/
 
-import tactic category.traversable tactic.slice fol
+import tactic category.traversable tactic.slice .fol' .parse_formula'
 
 namespace char
+
+notation `[]` := list.nil
 
 meta def check_is_valid_char : tactic unit := `[norm_num[is_valid_char]]
 
 /-- char.mk' will automatically attempt to use `check_is_valid_char` to produce the validity certificate -/
 def mk' (n : ℕ) (H : is_valid_char n . check_is_valid_char) : char :=
 char.mk n H
+
+def alpha : list char := "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ".data
+
+def numeric : list char := "0123456789".data
+
+def alphanumeric := alpha ++ numeric
 
 section whitespace_chars
 
@@ -147,7 +155,7 @@ meta def to_string : parser_tactic char → parser_tactic string :=
 λ p, do x <- p, return x.to_string
 
 meta def to_string' : parser_tactic (list char) → parser_tactic string :=
-λ p, do x <- p, return x.to_string
+λ p, do x <- p, return $ string_imp.mk x
 
 meta instance : has_coe (parser_tactic (char)) (parser_tactic string) :=
 ⟨to_string⟩
@@ -163,7 +171,7 @@ def eq_any (cs : list char) : char → Prop :=
 
 @[simp]lemma eq_any_cons {c} {cs} : eq_any (c::cs) = λ x, c = x ∨ eq_any cs x := rfl
 
-instance : ∀ {cs}, decidable_pred (eq_any cs) :=
+instance eq_any_decidable_pred : ∀ {cs}, decidable_pred (eq_any cs) :=
 begin
   intro cs, induction cs with c cs ih, unfold eq_any, tidy, apply_instance,
   intro x, haveI : decidable (eq_any cs x) := by apply ih,
@@ -174,9 +182,28 @@ begin
           { simp*, apply_instance }}
 end
 
+/- note: we'll never need this, but it's basically free -/
+def eq_all (cs : list char) : char → Prop :=
+λ c, cs.foldr (λ x, λ b, (= c) x ⊓ b)  ⊤
+
+@[simp]lemma eq_all_cons {c} {cs} : eq_all (c::cs) = λ x, c = x ∧ eq_all cs x := rfl
+
+instance eq_all_decidable_pred : ∀ {cs}, decidable_pred (eq_all cs) :=
+begin
+  intro cs, induction cs with c cs ih, unfold eq_all, tidy, apply_instance,
+  intro x, haveI : decidable (eq_all cs x) := by apply ih,
+  by_cases c = x,
+    { by_cases (eq_all cs x),
+          { simp*, apply_instance },
+          { simp*, apply_instance }},
+    { exact decidable.is_false (by simp*) }
+end
+
 meta def ch  (c : char) : parser_tactic char := sat (= c)
 
 meta def chs (cs : list char) : parser_tactic char := sat (eq_any cs)
+
+meta def not_chs (cs : list char) : parser_tactic char := sat (λ c, ¬ eq_any cs c)
 
 meta def str : string → parser_tactic string
 | ⟨[]⟩    := pure ""
@@ -230,16 +257,62 @@ meta def space : parser_tactic string := repeat (sat (= ' '))
 
 meta def whitespace : parser_tactic string := repeat (chs char.whitespace_chars)
 
+meta def not_whitespace : parser_tactic string := repeat (not_chs char.whitespace_chars)
+
+/-- `token p` runs p, then consumes as many spaces as possible before discarding them. -/
 meta def token {α} (p : parser_tactic α) : parser_tactic α := p <* space
+
+/-- `token' p runs p, then consumes as much whitespace as possible before discarding it. -/
+meta def token' {α} (p : parser_tactic α) : parser_tactic α := p <* whitespace
 
 meta def symbol : string → parser_tactic string := token ∘ str
 
+/-- An alphanumeric token is a string of alphanumeric characters which must begin with an alpha character. -/
+meta def alphanumeric_token : parser_tactic string :=
+string.append <$> (chs char.alpha) <*> (repeat (chs char.alphanumeric) <* whitespace)
+
 meta def apply {α} (p : parser_tactic α) : string → tactic (α × string) := (space *> p).run
+
+section parse_fol
+open fol
+
+meta def parse_preformula_aux : parser_tactic (preformula L_empty 0) :=
+token' (str "∀") >> parse_preformula_aux >>= (λ x, return (preformula.all x)) <|>
+(repeat item) *> return (&0 ≃ &0)
+
+meta instance {k} : has_to_tactic_format (preformula L_empty k)  :=
+⟨begin intro f, have := (reflected.has_to_tactic_format f).1 ,
+       apply this, apply_instance end⟩
+
+-- fol.preterm.var : Π {L : Language}, ℕ → preterm L 0
+-- fol.preterm.func : Π {L : Language} {l : ℕ}, L.functions l → preterm L l
+-- fol.preterm.app : Π {L : Language} {l : ℕ}, preterm L (l + 1) → preterm L 0 → preterm L l
+
+-- fol.preformula.falsum : Π {L : Language}, preformula L 0
+-- fol.preformula.equal : Π {L : Language}, term L → term L → preformula L 0
+-- fol.preformula.rel : Π {L : Language} {l : ℕ}, L.relations l → preformula L l
+-- fol.preformula.apprel : Π {L : Language} {l : ℕ}, preformula L (l + 1) → term L → preformula L l
+-- fol.preformula.imp : Π {L : Language}, preformula L 0 → preformula L 0 → preformula L 0
+-- fol.preformula.all : Π {L : Language}, preformula L 0 → preformula L 0
+
+-- ∀ x, x = x ∧ (f x y = 3)
+
+meta def parse_eq : parser_tactic $ term L_empty → term L_empty → preformula L_empty 0 :=
+(token (ch '=' >> return preformula.equal))
+
+meta def parser_var : parser_tactic $ sorry := sorry
+
+meta def parse_preterm {k} : parser_tactic (preterm L_empty k) := sorry
+
+meta def parse_preformula {k} : parser_tactic (preformula L_empty k) := sorry
+
+end parse_fol
 
 
 
 section tests
 
+run_cmd run' (repeat alphanumeric_token) "a1 a3 b3 b4 x12 xasd1"
 run_cmd run' (token $ (str "foo")) "foo    bar"
 run_cmd run' (sepby (str "foo") (str " ")) "foo foo foo foo"
 run_cmd run' (repeat (str "foo")) "barfoofoobarbarbarfoo"

@@ -1,1 +1,1 @@
-#+TITLE: Monadic parser combinators in Lean
+#+TITLE: Monadic parser combinators, in Lean

@@ -1850,7 +1850,7 @@ notation S`[`:95 f ` ;; `:95 v `]`:0 := @fol.realize_bounded_formula _ S _ 0 v f
 @[reducible] def realize_sentence (S : Structure L) (f : sentence L) : Prop :=
 realize_bounded_formula ([] : dvector S 0) f ([])
 
-notation S`[`:max f `]`:0 := fol.realize_sentence S f
+local notation S`[`:max f `]`:0 := fol.realize_sentence S f
 
 lemma realize_bounded_formula_iff {S : Structure L} : ∀{n} {v₁ : dvector S n} {v₂ : ℕ → S}
   (hv : ∀k (hk : k < n), v₁.nth k hk = v₂ k) {l} (t : bounded_preformula L n l)
@@ -1885,7 +1885,7 @@ lemma realize_bounded_formula_iff_of_fst {S : Structure L} : ∀{n} {v₁ w₁ :
 | _ _ (f₁ ⟹ f₂)      n' m := lift_bounded_formula_at f₁ n' m ⟹ lift_bounded_formula_at f₂ n' m
 | _ _ (∀' f)          n' m := ∀' (lift_bounded_formula_at f n' (m+1)).cast (le_of_eq $ succ_add _ _)
 
-notation f ` ↑' `:90 n ` # `:90 m:90 := fol.lift_bounded_formula_at f n m -- input ↑ with \u or \upa
+local notation f ` ↑' `:90 n ` # `:90 m:90 := fol.lift_bounded_formula_at f n m -- input ↑ with \u or \upa
 
 @[reducible] def lift_bounded_formula {n l} (f : bounded_preformula L n l) (n' : ℕ) :
   bounded_preformula L (n + n') l := f ↑' n' # 0
@@ -1929,7 +1929,7 @@ end
 | _ _ _ _ (∀' f)          s rfl :=
   ∀' (subst_bounded_formula f s $ by simp [succ_add]).cast_eq (succ_add _ _)
 
-notation f `[`:95 s ` // `:95 n ` // `:95 h `]`:0 := @fol.subst_bounded_formula _ n _ _ _ f s h
+local notation f `[`:95 s ` // `:95 n ` // `:95 h `]`:0 := @fol.subst_bounded_formula _ n _ _ _ f s h
 
 @[simp] def subst_bounded_formula_fst : ∀{n n' n'' l} (f : bounded_preformula L n'' l)
   (s : bounded_term L n') (h : n+n'+1 = n''),
@@ -2061,7 +2061,7 @@ def subst0_bounded_formula {n l} (f : bounded_preformula L (n+1) l) (s : bounded
   bounded_preformula L n l :=
 (subst_bounded_formula f s $ zero_add (n+1)).cast_eq $ zero_add n
 
-notation f `[`:max s ` /0]`:0 := fol.subst0_bounded_formula f s
+local notation f `[`:max s ` /0]`:0 := fol.subst0_bounded_formula f s
 
 @[simp] lemma subst0_bounded_formula_fst {n l} (f : bounded_preformula L (n+1) l)
   (s : bounded_term L n) : (subst0_bounded_formula f s).fst = f.fst[s.fst//0] :=

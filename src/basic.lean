@@ -3,16 +3,18 @@ Copyright (c) 2019 Jesse Michael Han. All rights reserved.
 Released under Apache 2.0 license as described in the file LICENSE.
 Author(s): Jesse Michael Han 
 
-Monadic parsing in Lean, following the paper of Hutton and Meijer.
+Monadic parsing in Lean, following Hutton-Meijer's 'Monadic Parsing in Haskell` (doi: 10.1017/S0956796898003050).
 
-A related implementation for character buffers (due to Gabriel Ebner) is in data.buffer.
+A related implementation for character buffers, due to Gabriel Ebner, is in data.buffer.
 -/
 
-import tactic category.traversable tactic.slice .fol' .parse_formula'
+import tactic category.traversable tactic.slice -- .fol' .parse_formula'
 
 namespace char
 
 notation `[]` := list.nil
+notation h :: t  := list.cons h t
+notation `[` l:(foldr `, ` (h t, list.cons h t) list.nil `]`) := l
 
 meta def check_is_valid_char : tactic unit := `[norm_num[is_valid_char]]
 
@@ -113,8 +115,13 @@ variables {α : Type}
 meta def mk (run : string → tactic (α × string)) : parser_tactic α :=
 state_t.mk run
 
+meta def lift {α} (val : tactic α) : parser_tactic α := state_t.lift val
+
 meta def run (p : parser_tactic α) : string → tactic (α × string) :=
 state_t.run p
+
+meta def run_parser (p : parser_tactic α) : string → parser_tactic α :=
+λ arg, lift (do (a,b) <- p.run arg, return a)
 
 /-- For testing parsers on strings -/
 meta def run' {α} [has_to_tactic_format α] (p : parser_tactic α) (arg : string) : tactic unit :=
@@ -125,6 +132,9 @@ by change _root_.monad (state_t _ _); apply_instance
 
 meta instance alternative_parser_tactic : alternative parser_tactic :=
 by change _root_.alternative (state_t _ _); apply_instance
+
+meta instance : has_append (parser_tactic string) :=
+⟨λ p₁ p₂, do a <- p₁, b <- p₂, return $ a ++ b⟩ 
 
 meta def fail : parser_tactic α := parser_tactic.mk $ λ _, tactic.failed
 
@@ -149,6 +159,16 @@ parser_tactic.mk $ λ str,
   match str with
   | ⟨[]⟩      := tactic.failed
   | ⟨(x::xs)⟩ := return (x, ⟨xs⟩)
+  end
+
+/--
+`item0` is like `item`, but does not consume anything (leaves the state unchanged).
+-/
+meta def item0 : parser_tactic char :=
+parser_tactic.mk $ λ str,
+  match str with
+  | ⟨[]⟩      := tactic.failed
+  | ⟨(x::xs)⟩ := return (x, ⟨x::xs⟩)
   end
 
 meta def to_string : parser_tactic char → parser_tactic string :=
@@ -205,6 +225,8 @@ meta def chs (cs : list char) : parser_tactic char := sat (eq_any cs)
 
 meta def not_chs (cs : list char) : parser_tactic char := sat (λ c, ¬ eq_any cs c)
 
+meta def not_ch (c : char) : parser_tactic char := not_chs $ [c]
+
 meta def str : string → parser_tactic string
 | ⟨[]⟩    := pure ""
 | ⟨x::xs⟩ := do y <- ch x,
@@ -224,6 +246,13 @@ meta def repeat {α} (p : parser_tactic α) : parser_tactic (list α) :=
 
 meta def repeat1 {α : Type} : parser_tactic α → parser_tactic (list α) :=
 λ p, list.cons <$> p <*> repeat p
+
+/--
+`not_str arg` consumes and returns the longest prefix which does not match `arg`.
+Upon encountering `arg`, `not_str arg`  consumes and discards it.
+-/
+meta def not_str : string → parser_tactic string := λ arg,
+repeat $ (succeeds $ str arg) >>= (λ b, if b then fail else item)
 
 meta def sepby_aux {α β} : parser_tactic α → parser_tactic β → parser_tactic (list α) :=
 λ p sep,
@@ -271,53 +300,129 @@ meta def symbol : string → parser_tactic string := token ∘ str
 meta def alphanumeric_token : parser_tactic string :=
 string.append <$> (chs char.alpha) <*> (repeat (chs char.alphanumeric) <* whitespace)
 
+
+
+/--
+`delimiter_aux arg_left arg_right k` believes that it has passed `k` copies of `arg_left`, and is expecting `k` copies of `arg_right`.
+
+Upon encountering a copy of `arg_right`, it calls itself, decrementing the counter by 1.
+-/
+/-
+TODO(jesse) refactor this to consume extra characters to the right instead of left
+-/
+meta def delimiter_aux (arg_left : string) (arg_right : string) : Π k : ℕ, parser_tactic string
+| 0 := (not_str arg_left ++ str arg_left ++ delimiter_aux 1) <|> return ""
+| (k + 1) := (not_str arg_left ++ str arg_left ++ delimiter_aux (k + 2))
+             <|> ((not_str arg_right) ++ str arg_right) ++ delimiter_aux k
+
+/-- `delimiter arg_left arg_right parses the delimiters, then returns their interior as a string -/
+meta def delimiter (arg_left arg_right : string) : parser_tactic string :=
+delimiter_aux arg_left arg_right 0
+
+/--
+`delimiter' p arg_right arg_left` parses the delimiters, then runs p on their interior.
+-/
+meta def delimiter' {α} (p : parser_tactic α) (arg_right) (arg_left) : parser_tactic α :=
+delimiter arg_right arg_left >>= p.run_parser
+
+/-
+Note that "match any except for arg_right" is not right, because it will not fail even if a delimiter is never found
+So we need a parser that succeeds if and only if a match for e.g. ')' is found, then returns the consumed characters as a string
+-/
+
 meta def apply {α} (p : parser_tactic α) : string → tactic (α × string) := (space *> p).run
 
-section parse_fol
-open fol
+-- section parse_fol
+-- open fol
 
-meta def parse_preformula_aux : parser_tactic (preformula L_empty 0) :=
-token' (str "∀") >> parse_preformula_aux >>= (λ x, return (preformula.all x)) <|>
-(repeat item) *> return (&0 ≃ &0)
+-- meta instance {k} : has_to_tactic_format (preformula L_empty k)  :=
+-- ⟨begin intro f, have := (reflected.has_to_tactic_format f).1 ,
+--        apply this, apply_instance end⟩
 
-meta instance {k} : has_to_tactic_format (preformula L_empty k)  :=
-⟨begin intro f, have := (reflected.has_to_tactic_format f).1 ,
-       apply this, apply_instance end⟩
+-- meta def parse_preformula_aux : parser_tactic (preformula L_empty 0) :=
+-- token' (str "∀") >> parse_preformula_aux >>= (λ x, return (preformula.all x)) <|>
+-- (repeat item) *> return (&0 ≃ &0)
 
--- fol.preterm.var : Π {L : Language}, ℕ → preterm L 0
--- fol.preterm.func : Π {L : Language} {l : ℕ}, L.functions l → preterm L l
--- fol.preterm.app : Π {L : Language} {l : ℕ}, preterm L (l + 1) → preterm L 0 → preterm L l
+-- -- as vars are encountered, they are pushed onto the stack
+-- -- the de Bruijn index assigned to an encountered free variable is its position in the stack.
+-- -- a named variable is captured by the nearest quantifier with the same name
 
--- fol.preformula.falsum : Π {L : Language}, preformula L 0
--- fol.preformula.equal : Π {L : Language}, term L → term L → preformula L 0
--- fol.preformula.rel : Π {L : Language} {l : ℕ}, L.relations l → preformula L l
--- fol.preformula.apprel : Π {L : Language} {l : ℕ}, preformula L (l + 1) → term L → preformula L l
--- fol.preformula.imp : Π {L : Language}, preformula L 0 → preformula L 0 → preformula L 0
--- fol.preformula.all : Π {L : Language}, preformula L 0 → preformula L 0
+-- meta structure formula_state (k : ℕ) :=
+-- (bound_var : list name)
+-- (free_var : list name)
+-- (result : preformula L_empty k)
 
--- ∀ x, x = x ∧ (f x y = 3)
+-- #check formula_state.mk
 
-meta def parse_eq : parser_tactic $ term L_empty → term L_empty → preformula L_empty 0 :=
-(token (ch '=' >> return preformula.equal))
+-- -- meta def formula_state.var {k : ℕ} (σ : formula_state k) : tactic (list name) :=
+-- -- σ.bound_var >>= (λ x, (σ.free_var >>= (λ y, return (x ++ y))))
 
-meta def parser_var : parser_tactic $ sorry := sorry
+-- meta def parse_preformula {k : ℕ} (σ : formula_state k) : parser_tactic (formula_state 0) :=
+-- do token' (str "∀"),
+--    v <- (alphanumeric_token),
+--    let foo := ℕ in
+--    return (formula_state.mk (σ.bound_var ++ [v]) (σ.free_var) foo )
+-- -- TODO(jesse) finish this
 
-meta def parse_preterm {k} : parser_tactic (preterm L_empty k) := sorry
+-- -- @formula_state.mk 0 (σ.bound_var.append ([↑v] : list _)) σ.free_var (parse_preformula >>= _
 
-meta def parse_preformula {k} : parser_tactic (preformula L_empty k) := sorry
+-- -- meta def parse_preformula : parser_tactic (Σk, preformula L_empty k) :=
+-- -- do token' (str "∀") >> (parse_preformula >>= λ x, return ⟨x.fst, x.2⟩)
 
-end parse_fol
+-- -- run_cmd run' parse_preformula_aux "∀ ∀ ∀ ∀ foo"
 
+-- -- fol.preterm.var : Π {L : Language}, ℕ → preterm L 0
+-- -- fol.preterm.func : Π {L : Language} {l : ℕ}, L.functions l → preterm L l
+-- -- fol.preterm.app : Π {L : Language} {l : ℕ}, preterm L (l + 1) → preterm L 0 → preterm L l
 
+-- -- fol.preformula.falsum : Π {L : Language}, preformula L 0
+-- -- fol.preformula.equal : Π {L : Language}, term L → term L → preformula L 0
+-- -- fol.preformula.rel : Π {L : Language} {l : ℕ}, L.relations l → preformula L l
+-- -- fol.preformula.apprel : Π {L : Language} {l : ℕ}, preformula L (l + 1) → term L → preformula L l
+-- -- fol.preformula.imp : Π {L : Language}, preformula L 0 → preformula L 0 → preformula L 0
+-- -- fol.preformula.all : Π {L : Language}, preformula L 0 → preformula L 0
+
+-- -- ∀ x, x = x ∧ (f x y = 3)
+
+-- meta def parse_eq : parser_tactic $ term L_empty → term L_empty → preformula L_empty 0 :=
+-- (token (ch '=' >> return preformula.equal))
+
+-- meta def parser_var : parser_tactic $ sorry := sorry
+
+-- meta def parse_preterm {k} : parser_tactic (preterm L_empty k) := sorry
+
+-- meta def parse_preformula {k} : parser_tactic (preformula L_empty k) := sorry
+
+-- end parse_fol
 
 section tests
 
+run_cmd run' (delimiter "HELLO" "GOODBYE") "HELLO TOM GOODBYE TOM"
+
+run_cmd run' (delimiter "(" ")") "(1 + 2) + 3"
+
+run_cmd run' (delimiter "[" "]") "[a + b + [c + d] + [e + [f]]] + 3"
+
+run_cmd run' (delimiter "[" "]") "[]] + 3"
+
+run_cmd run' (delimiter "[" "]") "[1 + 2 + 3" -- returns nothing as it should
+
+run_cmd run' (delimiter "[" "]") "[a + b + [c + d] + [e + [f]]] + 3"
+
+run_cmd run' (not_str "HEWWO") "DUH HEWWO"
+
 run_cmd run' (repeat alphanumeric_token) "a1 a3 b3 b4 x12 xasd1"
+
 run_cmd run' (token $ (str "foo")) "foo    bar"
+
 run_cmd run' (sepby (str "foo") (str " ")) "foo foo foo foo"
+
 run_cmd run' (repeat (str "foo")) "barfoofoobarbarbarfoo"
+
 -- run_cmd run' (repeat1 (str "foo")) "barfoofoobarbarbarfoo" -- fails as it should
+
 run_cmd run' (repeat1 (str "foo")) "foofoofoobarbarbarfoo" 
+
 run_cmd run' (str "foo") "foobarbaz"  -- (foo, barbaz)
 
 end tests

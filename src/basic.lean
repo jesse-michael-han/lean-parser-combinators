@@ -249,7 +249,6 @@ meta def repeat1 {α : Type} : parser_tactic α → parser_tactic (list α) :=
 
 /--
 `not_str arg` consumes and returns the longest prefix which does not match `arg`.
-Upon encountering `arg`, `not_str arg`  consumes and discards it.
 -/
 meta def not_str : string → parser_tactic string := λ arg,
 repeat $ (succeeds $ str arg) >>= (λ b, if b then fail else item)
@@ -306,12 +305,15 @@ string.append <$> (chs char.alpha) <*> (repeat (chs char.alphanumeric) <* whites
 `delimiter_aux arg_left arg_right k` believes that it has passed `k` copies of `arg_left`, and is expecting `k` copies of `arg_right`.
 
 Upon encountering a copy of `arg_right`, it calls itself, decrementing the counter by 1.
+
+If it never encounters an opening `arg_left`, it returns the empty string.
 -/
 /-
 TODO(jesse) refactor this to consume extra characters to the right instead of left
 -/
 meta def delimiter_aux (arg_left : string) (arg_right : string) : Π k : ℕ, parser_tactic string
-| 0 := (not_str arg_left ++ str arg_left ++ delimiter_aux 1) <|> return ""
+| 0 := (not_str arg_left ++ str arg_left ++ delimiter_aux 1)
+       <|> return ""
 | (k + 1) := (not_str arg_left ++ str arg_left ++ delimiter_aux (k + 2))
              <|> ((not_str arg_right) ++ str arg_right) ++ delimiter_aux k
 

@@ -10,9 +10,19 @@ A related implementation for character buffers, due to Gabriel Ebner, is in data
 
 import tactic category.traversable tactic.slice -- .fol' .parse_formula'
 
-import category_theory.category
+import init.data.string
 
-import data.real.ennreal
+section miscellany
+
+lemma forall_iff_of_eq {α} {P Q : α → Prop} (h : P = Q) : (∀ x, P x ↔ Q x) :=
+λ _, h ▸ iff_of_eq rfl
+
+lemma mem_cons_iff {α} (xs : list α) (x y : α) : y ∈ (x::xs) ↔ y = x ∨ y ∈ xs :=
+(set.mem_union x (eq y) (λ (x : α), list.mem y xs))
+
+example {α β} (xs : list α) {x : α} (f : α → β) (H_mem : x ∈ xs) : f x ∈ xs.map f := list.mem_map_of_mem f H_mem
+
+end miscellany
 
 namespace char
 
@@ -28,7 +38,22 @@ meta def check_is_valid_char : tactic unit := `[norm_num[is_valid_char]]
 def mk' (n : ℕ) (H : is_valid_char n . check_is_valid_char) : char :=
 char.mk n H
 
-def alpha : list char := "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ".data
+def lower : list char := "abcdefghijklmnopqrstuvwxyz".data
+
+def upper : list char := "ABCDEFGHIJKLMNOPQRSTUVWXYZ".data
+
+lemma is_upper_of_mem_upper {c} (H : c ∈ upper) : is_upper c :=
+by {unfold is_upper upper, repeat{cases H, subst H, omega}, cases H }
+
+lemma to_lower_upper_eq_lower : upper.map to_lower = lower := dec_trivial
+
+lemma mem_lower_of_to_lower_upper {c} (H : c ∈ upper) : c.to_lower ∈ lower :=
+by {rw[<-to_lower_upper_eq_lower], exact list.mem_map_of_mem _ ‹_›}
+
+def lowercase : {c // c ∈ upper} → {c // c ∈ lower} :=
+λ ⟨c,H⟩, ⟨char.to_lower c, mem_lower_of_to_lower_upper H⟩
+
+def alpha : list char := lower ++ upper
 
 def numeric : list char := "0123456789".data
 
@@ -333,7 +358,7 @@ meta def symbol : string → parser_tactic string := token ∘ str
 
 /-- An alphanumeric token is a string of alphanumeric characters which must begin with an alpha character. -/
 meta def alphanumeric_token : parser_tactic string :=
-string.append <$> (chs char.alpha) <*> (repeat (chs char.alphanumeric) <* whitespace)
+string.append <$> (sat char.is_alpha) <*> (repeat (sat char.is_alphanum) <* whitespace)
 
 meta def digit : parser_tactic char  := chs char.numeric
 
@@ -550,6 +575,8 @@ with eval_term                 : term → ℕ
 with eval_expr                 : expr → ℕ
      | (expr.of_term t)        := eval_term t
      | (expr.of_addop op e t)  := (eval_addop op) (eval_expr e) (eval_term t)
+
+
 
 end arith_expr
 

@@ -135,6 +135,13 @@ end whitespace_chars
 
 end char
 
+namespace string
+
+def to_lower (arg : string) : string := ⟨arg.data.map char.to_lower⟩
+
+end string
+
+
 @[reducible]meta def parser' := state_t string
 
 meta def parser_tactic := parser' tactic
@@ -151,6 +158,11 @@ meta def lift {α} (val : tactic α) : parser_tactic α := state_t.lift val
 meta def run (p : parser_tactic α) : string → tactic (α × string) :=
 state_t.run p
 
+/--
+`run parser p arg` runs `p` as if `arg` were the current state.
+
+It returns the result of p, leaving the actual state unchanged.
+-/
 meta def run_parser (p : parser_tactic α) : string → parser_tactic α :=
 λ arg, lift (do (a,b) <- p.run arg, return a)
 
@@ -171,6 +183,12 @@ meta def fail : parser_tactic α := parser_tactic.mk $ λ _, tactic.failed
 
 meta def trace_state : parser_tactic unit :=
 parser_tactic.mk $ λ str, tactic.trace str >> return ((), str)
+
+meta def get_state : parser_tactic string :=
+state_t.get
+
+meta def run_parser' (p : parser_tactic α) : parser_tactic string → parser_tactic α :=
+λ q, q >>= run_parser p
 
 meta def skip : parser_tactic unit :=
 parser_tactic.mk $ λ str, return ((), str)
@@ -292,7 +310,10 @@ meta def nil_if_fail {α} : parser_tactic α → parser_tactic (list α) :=
 λ p, (p >>= return ∘ return) <|> return []
 
 meta def fail_if_nil : parser_tactic string → parser_tactic string :=
-λ p, do x <- p, guard (x = ""), return x
+λ p, do x <- p, guard (x ≠ ""), return x
+
+meta def fail_if_state_nil {α} (p : parser_tactic α) : parser_tactic α :=
+(get_state >>= λ arg, guard (arg ≠ "")) >> p
 
 meta def list.mcons {m} [monad m] {α} (x : α) (xs : list α) : m (list α) :=
 return (x::xs)
@@ -304,6 +325,12 @@ meta def repeat {α} (p : parser_tactic α) : parser_tactic (list α) :=
 
 meta def repeat1 {α : Type} : parser_tactic α → parser_tactic (list α) :=
 λ p, list.cons <$> p <*> repeat p
+
+/--
+`succeeds' p` runs p, but does not change the state.
+-/
+meta def succeeds' {α} (p : parser_tactic α) : parser_tactic bool :=
+succeeds $ get_state >>= (run_parser p)
 
 /--
 `not_str arg` consumes and returns the longest prefix which does not match `arg`.
@@ -393,6 +420,10 @@ meta def between (arg_left arg_right : string) : parser_tactic string :=
 
 meta def apply {α} (p : parser_tactic α) : string → tactic (α × string) := (space *> p).run
 
+--TODO(jesse) fix this so it also consumes the corresponding prefix of the actual state
+meta def case_insensitive (p : string → parser_tactic string) : string → parser_tactic string :=
+λ arg, do s <- get_state, run_parser (p arg.to_lower) s.to_lower
+
 -- section parse_fol
 -- open fol
 
@@ -458,6 +489,14 @@ meta def apply {α} (p : parser_tactic α) : string → tactic (α × string) :=
 
 section tests
 
+run_cmd (fail_if_nil $ str "h").run' "hewwo" -- succeeds as it should
+
+-- run_cmd (fail_if_nil $ str "").run' "hewwo" -- fails as it should
+
+-- run_cmd run' (fail_if_state_nil $ skip) "" -- fails as it should
+
+run_cmd run' (fail_if_state_nil $ skip) "foo" -- succeeds as it should
+
 run_cmd run' (delimiter "(" ")") "(1 + 2) + 3"
 
 run_cmd run' (delimiter "[" "]") "[a + b + [c + d] + [e + [f]]] + 3"
@@ -483,6 +522,8 @@ run_cmd run' (repeat (str "foo")) "barfoofoobarbarbarfoo"
 run_cmd run' (repeat1 (str "foo")) "foofoofoobarbarbarfoo" 
 
 run_cmd run' (str "foo") "foobarbaz"  -- (foo, barbaz)
+
+run_cmd (repeat $ str "a" <|> str "b").run' "bbababbaabaaaa" -- if one branch fails, the state is unchanged and passed to the other branch
 
 end tests
 
@@ -549,6 +590,10 @@ with expr : Type
      | of_term          : term → expr
      | of_addop         : addop → expr → term → expr
 
+def term.of_digit := term.of_factor ∘ factor.of_digit
+
+def expr.of_digit := expr.of_term ∘ term.of_digit
+
 meta mutual def eval_addop,eval_mulop,eval_digit,eval_factor,eval_term,eval_expr
 with eval_addop                : addop → ℕ → ℕ → ℕ
      | addop.plus              := (nat.add)
@@ -576,7 +621,93 @@ with eval_expr                 : expr → ℕ
      | (expr.of_term t)        := eval_term t
      | (expr.of_addop op e t)  := (eval_addop op) (eval_expr e) (eval_term t)
 
+meta def nat.to_fmt : ℕ → format := nat.has_to_format.to_format
 
+meta instance format_digit : has_to_tactic_format digit :=
+⟨λ x, return $ nat.to_fmt (eval_digit x)⟩
+
+meta instance format_factor : has_to_tactic_format factor :=
+⟨λ x, return $ nat.to_fmt (eval_factor x)⟩
+
+meta instance format_term : has_to_tactic_format term :=
+⟨λ x, return $ nat.to_fmt (eval_term x)⟩
+
+meta instance format_expr : has_to_tactic_format expr := 
+⟨λ x, return $ nat.to_fmt (eval_expr x)⟩
+
+meta mutual def parse_addop,parse_mulop,parse_digit,parse_factor,parse_term,parse_expr
+with parse_addop                : string → tactic (addop × string)
+| arg := (token (str "+" >> return addop.plus <|> str "-" >> return addop.minus)).run arg
+with parse_mulop                : string → tactic (mulop × string)
+| arg := (token (str "*" >> return mulop.mult <|> str "/" >> return mulop.div)).run arg
+with parse_digit                : string → tactic (digit × string)
+| arg := (token $ trace "HEWWO" >>    trace_state >> do  x <- parser_tactic.digit,
+   trace $ x.to_string ++ " WAS THE DIGIT I PARSED",
+   if (x = '1') then return digit.one else
+   if (x = '2') then return digit.two else
+   if (x = '3') then return digit.three else
+   if (x = '4') then return digit.four else
+   if (x = '5') then return digit.five else
+   if (x = '6') then return digit.six else
+   if (x = '7') then return digit.seven else
+   if (x = '8') then return digit.eight else
+   if (x = '9') then return digit.nine else
+   fail).run arg
+with parse_factor               : string → tactic (factor × string)
+| arg := (fail_if_state_nil $ (trace "hello" >> (token $ (mk parse_digit) >>= return ∘ factor.of_digit <|> (mk parse_expr) >>= return ∘ factor.of_expr))).run arg
+with parse_term                 : string → tactic (term × string)
+| arg := (token $
+            (do
+               trace "hola",
+               b <- succeeds' (do not_str "*" >> str "*"),
+               if b then (do t <- (mk parse_term),
+                            op <- (mk parse_mulop),
+                            f  <- (mk parse_factor),
+                            return $ term.of_mulop op t f)
+                     else (mk parse_factor) >>= return ∘ term.of_factor
+                -- e   <- (mk parse_expr),
+                -- op  <- (mk parse_addop),
+                -- t   <- (mk parse_term),
+                -- return $ expr.of_addop op e t
+             )).run arg
+with parse_expr                 : string → tactic (expr × string)
+| arg := (token $
+            (do
+               trace "bonjour",
+               b <- succeeds' (do not_str "+" >> str "+"),
+               if b then -- return (expr.of_digit digit.one)
+                           (do p <- not_str "+",
+                             e <- (mk parse_expr).run_parser p,
+                            op <- (mk parse_addop),
+                            t  <- (mk parse_term),
+                            return $ expr.of_addop op e t)
+                     else (mk parse_term) >>= return ∘ expr.of_term
+                -- e   <- (mk parse_expr),
+                -- op  <- (mk parse_addop),
+                -- t   <- (mk parse_term),
+                -- return $ expr.of_addop op e t
+             )
+                ).run arg
+
+meta def parse_arith_expr : parser_tactic expr := mk parse_expr
+
+-- run_cmd (mk parse_expr).run' "9 + 1 + 1"
+
+-- run_cmd (parse_arith_expr >> parse_arith_expr).run' "1"
+
+-- run_cmd (
+-- do b <- succeeds' (do not_str "+" >> str "+"),
+--    trace_state,
+--    if b then (do d₁ <- (mk parse_digit),
+--                  op <- (mk parse_addop),
+--                  d₂ <- (mk parse_digit),
+--                  return $ expr.of_addop op (expr.of_digit d₁) (term.of_digit d₂)
+
+--              )
+--         else (mk parse_digit) >>= return ∘ expr.of_digit
+
+
+--   ).run' "8 + 7"
 
 end arith_expr
 

@@ -167,6 +167,7 @@ meta def run_parser (p : parser_tactic α) : string → parser_tactic α :=
 λ arg, lift (do (a,b) <- p.run arg, return a)
 
 /-- For testing parsers on strings -/
+--TODO(jesse) define a custom format for parser_tactic
 meta def run' {α} [has_to_tactic_format α] (p : parser_tactic α) (arg : string) : tactic unit :=
   p.run arg >>= tactic.trace
 
@@ -349,23 +350,55 @@ meta def sepby {α β} : parser_tactic α → parser_tactic β → parser_tactic
 λ p sep,
   (sepby_aux p sep) <|> return []
 
-meta def chainl_aux {α} : parser_tactic α → parser_tactic (α → α → α) → α → parser_tactic α :=
-λ p op a,
-  do f <- op,
+/-
+The choice operator (++) from Hutton-Meijer does not have a direct analogue in this framework, since we use `tactic` as the monad instead of `list`.
+
+However, the deterministic choice operator (+++):
+1. fails iff both p and q fail
+2. if p succeeds, returns the result of p
+3. if p fails, runs q
+
+and therefore (+++) is emulated by the orelse (<|>) combinator.
+-/
+
+/-
+c.f. Hutton-Meijer:
+
+chainl :: Parser a -> Parser (a -> a -> a) -> a -> Parser a
+chainl p op a = (p ‘chainl1‘ op) +++ return a
+
+chainl1 :: Parser a -> Parser (a -> a -> a) -> Parser a
+p ‘chainl1‘ op = do {a <- p; rest a}
+                 where
+                   rest a = (do f <- op
+                                b <- p
+                                rest (f a b))
+                            +++ return a
+-/
+
+meta def chainl_rest {α} (p : parser_tactic α) (op : parser_tactic (α → α → α)) : α → parser_tactic α :=
+λ a,
+  (do f <- op,
      b <- p,
-     chainl_aux p op (f a b) <|> return a
+     chainl_rest (f a b)) <|> return a
+
+meta def chainl1 {α} (p : parser_tactic α) (op : parser_tactic (α → α → α)) : parser_tactic α :=
+do a <- p, chainl_rest p op a
 
 meta def chainl {α} : parser_tactic α → parser_tactic (α → α → α) → α → parser_tactic α :=
-λ p op a, (p >>= chainl_aux p op) <|> return a
+λ p op a, (chainl1 p op) <|> return a
 
-meta def chainr_aux {α} : parser_tactic α → parser_tactic (α → α → α) → α → parser_tactic α :=
-λ p op a,
-  do f <- op,
-     b <- (p >>= chainr_aux p op),
-     chainr_aux p op (f a b) <|> return a
+meta def chainr_rest {α} (p : parser_tactic α) (op : parser_tactic (α → α → α)) : α → parser_tactic α :=
+λ a,
+  (do f <- op,
+     b <- p,
+     chainr_rest (f b a)) <|> return a
+
+meta def chainr1 {α} (p : parser_tactic α) (op : parser_tactic (α → α → α)) : parser_tactic α :=
+do a <- p, chainr_rest p op a
 
 meta def chainr {α} : parser_tactic α → parser_tactic (α → α → α) → α → parser_tactic α :=
-λ p op a, (p >>= chainr_aux p op) <|> return a
+λ p op a, (chainr1 p op) <|> return a
 
 /- Lexical combinators -/
 
@@ -546,6 +579,7 @@ def from_base_10 : list ℕ → ℕ := λ xs, from_base_10_aux xs.length xs
 
 meta def digit' : parser_tactic ℕ :=
 do x <- digit,
+   if (x = '0') then return 0 else
    if (x = '1') then return 1 else
    if (x = '2') then return 2 else
    if (x = '3') then return 3 else
@@ -571,6 +605,7 @@ with mulop : Type
      | mult             : mulop
      | div              : mulop
 with digit : Type
+     | zero             : digit
      | one              : digit
      | two              : digit
      | three            : digit
@@ -602,6 +637,7 @@ with eval_mulop                : mulop → ℕ → ℕ → ℕ
      | mulop.mult              := (nat.mul)
      | mulop.div               := (nat.div)
 with eval_digit                : digit → ℕ
+     | digit.zero              := 0
      | digit.one               := 1
      | digit.two               := 2
      | digit.three             := 3
@@ -635,6 +671,8 @@ meta instance format_term : has_to_tactic_format term :=
 meta instance format_expr : has_to_tactic_format expr := 
 ⟨λ x, return $ nat.to_fmt (eval_expr x)⟩
 
+
+
 meta mutual def parse_addop,parse_mulop,parse_digit,parse_factor,parse_term,parse_expr
 with parse_addop                : string → tactic (addop × string)
 | arg := (token (str "+" >> return addop.plus <|> str "-" >> return addop.minus)).run arg
@@ -643,6 +681,7 @@ with parse_mulop                : string → tactic (mulop × string)
 with parse_digit                : string → tactic (digit × string)
 | arg := (token $ trace "HEWWO" >>    trace_state >> do  x <- parser_tactic.digit,
    trace $ x.to_string ++ " WAS THE DIGIT I PARSED",
+   if (x = '0') then return digit.zero else
    if (x = '1') then return digit.one else
    if (x = '2') then return digit.two else
    if (x = '3') then return digit.three else
@@ -691,7 +730,7 @@ with parse_expr                 : string → tactic (expr × string)
 
 meta def parse_arith_expr : parser_tactic expr := mk parse_expr
 
--- run_cmd (mk parse_expr).run' "9 + 1 + 1"
+run_cmd (mk parse_expr).run' "9 + 1 + 1"
 
 -- run_cmd (parse_arith_expr >> parse_arith_expr).run' "1"
 

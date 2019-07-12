@@ -10,7 +10,7 @@ A related implementation for character buffers, due to Gabriel Ebner, is in data
 
 import tactic category.traversable tactic.slice -- .fol' .parse_formula'
 
-import init.data.string
+import init.data.string tactic.explode
 
 section miscellany
 
@@ -166,11 +166,6 @@ It returns the result of p, leaving the actual state unchanged.
 meta def run_parser (p : parser_tactic α) : string → parser_tactic α :=
 λ arg, lift (do (a,b) <- p.run arg, return a)
 
-/-- For testing parsers on strings -/
---TODO(jesse) define a custom format for parser_tactic
-meta def run' {α} [has_to_tactic_format α] (p : parser_tactic α) (arg : string) : tactic unit :=
-  p.run arg >>= tactic.trace
-
 meta instance monad_parser_tactic : monad parser_tactic :=
 by change _root_.monad (state_t _ _); apply_instance
 
@@ -215,6 +210,19 @@ meta def to_tactic (p : parser_tactic α) : string → tactic α :=
 
 meta instance : has_coe (parser_tactic α) (string → tactic α) :=
 ⟨to_tactic⟩
+
+meta def parser_tactic_format {α} [H : has_to_format α] : α × string → format :=
+λ ⟨r,σ⟩,
+    format.line ++ ("Result:") ++
+    format.line ++ format.line ++ (format.nest 5 $ to_fmt r) ++
+    format.line ++ format.line ++
+    "──────────────────────────────────────" ++
+    format.line ++ format.line ++ ("State:") ++
+    format.line ++ format.line ++ (format.nest 5 $ to_fmt σ)
+
+/-- For testing parsers on strings -/
+meta def run' {α} [has_to_format α] (p : parser_tactic α) (arg : string) : tactic unit :=
+  p.run arg >>= λ fmt, return $ _root_.trace_fmt (parser_tactic_format fmt) (λ _, ())
 
 end parser_tactic
 end parser_tactic
@@ -659,17 +667,17 @@ with eval_expr                 : expr → ℕ
 
 meta def nat.to_fmt : ℕ → format := nat.has_to_format.to_format
 
-meta instance format_digit : has_to_tactic_format digit :=
-⟨λ x, return $ nat.to_fmt (eval_digit x)⟩
+meta instance format_digit : has_to_format digit :=
+⟨λ x, nat.to_fmt (eval_digit x)⟩
 
-meta instance format_factor : has_to_tactic_format factor :=
-⟨λ x, return $ nat.to_fmt (eval_factor x)⟩
+meta instance format_factor : has_to_format factor :=
+⟨λ x, nat.to_fmt (eval_factor x)⟩
 
-meta instance format_term : has_to_tactic_format term :=
-⟨λ x, return $ nat.to_fmt (eval_term x)⟩
+meta instance format_term : has_to_format term :=
+⟨λ x, nat.to_fmt (eval_term x)⟩
 
-meta instance format_expr : has_to_tactic_format expr := 
-⟨λ x, return $ nat.to_fmt (eval_expr x)⟩
+meta instance format_expr : has_to_format expr := 
+⟨λ x, nat.to_fmt (eval_expr x)⟩
 
 
 
@@ -759,12 +767,12 @@ section calculator
 
 open calculator
 
-def from_base_10_aux : ℕ → list ℕ → ℕ
-| _      []          := 0
-| 0      (x::xs)     := x
-| (n+1)  (x::xs)     := (10^n) * x + from_base_10_aux n xs
+def from_base_10_aux : ℕ → list ℤ → ℤ
+| _ []               := 0
+| 0 (x::xs)          := x
+| (n+1) (x::xs)      := (10^n) * x + from_base_10_aux n xs
 
-def from_base_10 : list ℕ → ℕ := λ xs, from_base_10_aux xs.length xs
+def from_base_10 : list ℤ → ℤ := λ xs, from_base_10_aux xs.length xs
 
 meta def digit' : parser_tactic ℤ :=
 do x <- digit,
@@ -780,7 +788,7 @@ do x <- digit,
    if (x = '9') then return 9 else
    fail
 
-meta def number : parser_tactic ℕ := (repeat digit') >>= return ∘ from_base_10
+meta def number : parser_tactic ℤ := (repeat digit') >>= return ∘ from_base_10
 
 meta def parse_number (arg : string) : tactic unit :=
 do n <- number.to_tactic arg,
@@ -848,17 +856,17 @@ with eval_expr                 : expr → ℕ
 
 meta def nat.to_fmt : ℕ → format := nat.has_to_format.to_format
 
-meta instance format_digit : has_to_tactic_format digit :=
-⟨λ x, return $ nat.to_fmt (eval_digit x)⟩
+meta instance format_digit : has_to_format digit :=
+⟨λ x, nat.to_fmt (eval_digit x)⟩
 
-meta instance format_factor : has_to_tactic_format factor :=
-⟨λ x, return $ nat.to_fmt (eval_factor x)⟩
+meta instance format_factor : has_to_format factor :=
+⟨λ x, nat.to_fmt (eval_factor x)⟩
 
-meta instance format_term : has_to_tactic_format term :=
-⟨λ x, return $ nat.to_fmt (eval_term x)⟩
+meta instance format_term : has_to_format term :=
+⟨λ x, nat.to_fmt (eval_term x)⟩
 
-meta instance format_expr : has_to_tactic_format expr := 
-⟨λ x, return $ nat.to_fmt (eval_expr x)⟩
+meta instance format_expr : has_to_format expr := 
+⟨λ x, nat.to_fmt (eval_expr x)⟩
 
 /-
 c.f. Hutton-Meijer:

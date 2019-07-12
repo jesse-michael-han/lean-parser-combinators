@@ -414,7 +414,7 @@ meta def token {α} (p : parser_tactic α) : parser_tactic α := p <* space
 /-- `token' p runs p, then consumes as much whitespace as possible before discarding it. -/
 meta def token' {α} (p : parser_tactic α) : parser_tactic α := p <* whitespace
 
-meta def symbol : string → parser_tactic string := token ∘ str
+meta def symb : string → parser_tactic string := token ∘ str
 
 /-- An alphanumeric token is a string of alphanumeric characters which must begin with an alpha character. -/
 meta def alphanumeric_token : parser_tactic string :=
@@ -751,3 +751,156 @@ run_cmd (mk parse_expr).run' "9 + 1 + 1"
 end arith_expr
 
 end arith_expr
+
+namespace calculator
+
+
+section calculator
+
+open calculator
+
+def from_base_10_aux : ℕ → list ℕ → ℕ
+| _      []          := 0
+| 0      (x::xs)     := x
+| (n+1)  (x::xs)     := (10^n) * x + from_base_10_aux n xs
+
+def from_base_10 : list ℕ → ℕ := λ xs, from_base_10_aux xs.length xs
+
+meta def digit' : parser_tactic ℤ :=
+do x <- digit,
+   if (x = '0') then return 0 else
+   if (x = '1') then return 1 else
+   if (x = '2') then return 2 else
+   if (x = '3') then return 3 else
+   if (x = '4') then return 4 else
+   if (x = '5') then return 5 else
+   if (x = '6') then return 6 else
+   if (x = '7') then return 7 else
+   if (x = '8') then return 8 else
+   if (x = '9') then return 9 else
+   fail
+
+meta def number : parser_tactic ℕ := (repeat digit') >>= return ∘ from_base_10
+
+meta def parse_number (arg : string) : tactic unit :=
+do n <- number.to_tactic arg,
+   tactic.exact `(n)
+
+mutual inductive addop,mulop,digit,factor,term,expr
+with addop : Type
+     | plus             : addop
+     | minus            : addop
+with mulop : Type
+     | mult             : mulop
+     | div              : mulop
+with digit : Type
+     | zero             : digit
+     | one              : digit
+     | two              : digit
+     | three            : digit
+     | four             : digit
+     | five             : digit
+     | six              : digit
+     | seven            : digit
+     | eight            : digit
+     | nine             : digit
+with factor : Type
+     | of_digit         : digit → factor
+     | of_expr          : expr  → factor
+with term : Type
+     | of_factor        : factor → term
+     | of_mulop         : mulop → term → factor → term
+with expr : Type
+     | of_term          : term → expr
+     | of_addop         : addop → expr → term → expr
+
+def term.of_digit := term.of_factor ∘ factor.of_digit
+
+def expr.of_digit := expr.of_term ∘ term.of_digit
+
+meta mutual def eval_addop,eval_mulop,eval_digit,eval_factor,eval_term,eval_expr
+with eval_addop                : addop → ℕ → ℕ → ℕ
+     | addop.plus              := (nat.add)
+     | addop.minus             := (nat.sub)
+with eval_mulop                : mulop → ℕ → ℕ → ℕ
+     | mulop.mult              := (nat.mul)
+     | mulop.div               := (nat.div)
+with eval_digit                : digit → ℕ
+     | digit.zero              := 0
+     | digit.one               := 1
+     | digit.two               := 2
+     | digit.three             := 3
+     | digit.four              := 4
+     | digit.five              := 5
+     | digit.six               := 6
+     | digit.seven             := 7
+     | digit.eight             := 8
+     | digit.nine              := 9
+with eval_factor               : factor → ℕ
+     | (factor.of_digit k)     := eval_digit k         
+     | (factor.of_expr e)      := eval_expr e
+with eval_term                 : term → ℕ
+     | (term.of_factor f)      := eval_factor f
+     | (term.of_mulop op t f)  := (eval_mulop op) (eval_term t) (eval_factor f)
+with eval_expr                 : expr → ℕ
+     | (expr.of_term t)        := eval_term t
+     | (expr.of_addop op e t)  := (eval_addop op) (eval_expr e) (eval_term t)
+
+meta def nat.to_fmt : ℕ → format := nat.has_to_format.to_format
+
+meta instance format_digit : has_to_tactic_format digit :=
+⟨λ x, return $ nat.to_fmt (eval_digit x)⟩
+
+meta instance format_factor : has_to_tactic_format factor :=
+⟨λ x, return $ nat.to_fmt (eval_factor x)⟩
+
+meta instance format_term : has_to_tactic_format term :=
+⟨λ x, return $ nat.to_fmt (eval_term x)⟩
+
+meta instance format_expr : has_to_tactic_format expr := 
+⟨λ x, return $ nat.to_fmt (eval_expr x)⟩
+
+/-
+c.f. Hutton-Meijer:
+
+expr :: Parser Int
+addop :: Parser (Int -> Int -> Int)
+mulop :: Parser (Int -> Int -> Int)
+
+expr = chainl1 term addop
+term = chainl1 factor mulop
+factor = digit +++ (do symb "("; n <- expr; symb ")"; return n)
+digit = (do <- token (sat isDigit); return(ord x - ord '0'))
+addop = (do symb "+"; return (+)) <|> (do symb "-"; return (-)))
+multop = (do symb "*"; return (*)) <|> (do symb "/"; return (/)))
+
+Since mutual recursion in Lean seems to require use of the equation compiler,
+we hack around this by exposing the underlying `parser_tactic.run` function,
+later recovering the parser with `parser_tactic.mk`.
+-/
+
+meta mutual def parse_addop,parse_mulop,parse_digit,parse_factor,parse_term,parse_expr
+with parse_addop                : string → tactic ((ℤ → ℤ → ℤ) × string)
+| arg := (symb "+" >> return (+) <|> symb "-" >> return (λ x y : ℤ, x - y)).run arg
+with parse_mulop                : string → tactic ((ℤ → ℤ → ℤ) × string)
+| arg := (symb "*" >> return (*) <|> symb "/" >> return (λ x y : ℤ, x / y)).run arg
+with parse_digit                : string → tactic (ℤ × string)
+| arg := (token $ digit').run arg
+with parse_factor               : string → tactic (ℤ × string)
+| arg := (mk parse_digit <|> do symb "(", e <- (mk parse_expr), symb ")", return e).run arg
+with parse_term                 : string → tactic (ℤ × string)
+| arg := (chainl1 (mk parse_factor) (mk parse_mulop)).run arg
+with parse_expr                 : string → tactic (ℤ × string)
+| arg := (chainl1 (mk parse_term) (mk parse_addop)).run arg
+
+meta def calculator : parser_tactic ℤ := mk parse_expr
+
+run_cmd calculator.run' "(2 * (3 + 5 + (2 * 2)))"
+-- 24
+
+run_cmd calculator.run' "9 - 9 * 0 * 3 + 4 - 7"
+-- 6
+
+end calculator
+
+end calculator

@@ -1,1 +1,31 @@
 #+TITLE: Monadic parser combinators, in Lean
+
+This repository contains an implementation in Lean 3 of monadic [[https://en.wikipedia.org/wiki/Parser_combinator][parser combinators]], as described in the paper /Monadic parsing in Haskell/ ([[https://dl.acm.org/citation.cfm?id=969598][Hutton-Meijer]], 1998).
+
+We make some modifications: parsers are a special case of ~state_t~ and we replace the list monad with the tactic monad.
+
+For comparison, here is the final example from the paper (a parser for evaluating arithmetic expressions), redone in Lean:
+
+#+begin_src lean
+meta mutual def parse_addop,parse_mulop,parse_digit,parse_factor,parse_term,parse_expr
+with parse_addop                : string → tactic ((ℤ → ℤ → ℤ) × string)
+| arg := (symb "+" >> return (+) <|> symb "-" >> return (λ x y : ℤ, x - y)).run arg
+with parse_mulop                : string → tactic ((ℤ → ℤ → ℤ) × string)
+| arg := (symb "*" >> return (*) <|> symb "/" >> return (λ x y : ℤ, x / y)).run arg
+with parse_digit                : string → tactic (ℤ × string)
+| arg := (token $ digit').run arg
+with parse_factor               : string → tactic (ℤ × string)
+| arg := (mk parse_digit <|> do symb "(", e <- (mk parse_expr), symb ")", return e).run arg
+with parse_term                 : string → tactic (ℤ × string)
+| arg := (chainl1 (mk parse_factor) (mk parse_mulop)).run arg
+with parse_expr                 : string → tactic (ℤ × string)
+| arg := (chainl1 (mk parse_term) (mk parse_addop)).run arg
+
+meta def calculator : parser_tactic ℤ := mk parse_expr
+
+run_cmd calculator.run' "(2 * (3 + 5 + (2 * 2)))"
+-- 24
+
+run_cmd calculator.run' "9 - 9 * 0 * 3 + 4 - 7"
+-- 6
+#+end_src

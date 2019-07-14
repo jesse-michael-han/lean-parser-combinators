@@ -12,8 +12,6 @@ import tactic category.traversable tactic.slice -- .fol' .parse_formula'
 
 import init.data.string tactic.explode
 
-#check lean.parser
-
 section miscellany
 
 lemma forall_iff_of_eq {α} {P Q : α → Prop} (h : P = Q) : (∀ x, P x ↔ Q x) :=
@@ -140,6 +138,9 @@ end char
 namespace string
 
 def to_lower (arg : string) : string := ⟨arg.data.map char.to_lower⟩
+
+def reverse (arg : string) : string :=
+⟨arg.data.reverse⟩
 
 end string
 
@@ -461,6 +462,11 @@ delimiter_aux arg_left arg_right 0
 -/
 meta def delimiter' {α} (p : parser_tactic α) (arg_right) (arg_left) : parser_tactic α :=
 delimiter arg_right arg_left >>= p.run_parser
+
+meta def delimiter'' (arg_left arg_right : string) : parser_tactic string :=
+do r <- (delimiter arg_left arg_right),
+   r' <- run_parser (symb arg_left >> get_state) r,
+   run_parser ((symb arg_right.reverse) >> get_state >>= return ∘ string.reverse) r'.reverse
 
 meta def between (arg_left arg_right : string) : parser_tactic string :=
   (str arg_left ++ not_strs [arg_left, arg_right] ++ (between <|> return "") ++ not_strs [arg_left, arg_right] ++ str arg_right)
@@ -920,3 +926,87 @@ run_cmd calculator.run' "9 - 9 * 0 * 3 + 4 - 7"
 end calculator
 
 end calculator
+
+section parse_tree_from_list
+
+inductive my_tree : Type
+| node : option string → my_tree
+| join : list my_tree → option string → my_tree
+
+open my_tree
+
+example : my_tree := node none
+def example_tree : my_tree := join [node none, node none, node none] "foo"
+
+
+/-
+(a, b, c, (d, e) f) should be parsed as
+
+  none -------┐ 
+ / | \ \      | 
+a  b c  none  f
+        |  \
+        d   e
+-/
+
+-- meta def my_tree_parser : parser_tactic my_tree :=
+-- do
+--   symb "(", my_tree_parser_aux, symb ")"
+
+-- meta mutual def my_tree_parser₁,my_tree_parser₂,my_tree_parser₃
+-- with my_tree_parser₁ : string → tactic (my_tree × string)
+-- | arg := ((succeeds' (ch '(') >> mk my_tree_parser₁) <|> not_str "," >>= λ x, return $ my_tree.node x ).run arg
+-- with my_tree_parser₂ : string → tactic (my_tree × string)
+-- | arg := ((do symb "(", ts <- (mk my_tree_parser₃), symb ")", return (my_tree.join ts none))).run arg
+-- with my_tree_parser₃ : string → tactic (list my_tree × string)
+-- | arg := (sepby (mk my_tree_parser₁) (symb ",")).run arg
+
+run_cmd (fail_if_nil $ delimiter "(" ")").run' "(abc)"
+
+-- meta mutual def my_tree_parser₁,my_tree_parser₂
+-- with my_tree_parser₁ : string → tactic (my_tree × string)
+-- | arg := ((trace "1" >> (do symb "(", ts <- (mk my_tree_parser₂), symb ")", return (my_tree.join ts none))) <|> trace "1.2" >> not_str "," >>= λ x, return $ my_tree.node x).run arg
+-- with my_tree_parser₂ : string → tactic (list my_tree × string)
+-- | arg := (trace "2" >> sepby (mk my_tree_parser₁) (symb ",")).run arg
+
+meta mutual def my_tree_parser₁,my_tree_parser₂
+with my_tree_parser₁ : string → tactic (my_tree × string)
+| arg := (
+           (do int <- (fail_if_nil $ delimiter'' "(" ")"),
+               ts  <- (run_parser (mk my_tree_parser₂) int),
+               return (my_tree.join ts none))
+            <|>
+           (do x <- not_str ",",
+               return $ my_tree.node x)
+          ).run arg
+with my_tree_parser₂ : string → tactic (list my_tree × string)
+| arg := (trace "2" >> sepby (mk my_tree_parser₁) (symb ",")).run arg
+
+--(fail_if_nil (not_str "(") >> (not_str "," >>= λ x, return (my_tree.node x))) <|> 
+
+run_cmd (sepby (fail : parser_tactic string) (fail : parser_tactic string)).run' "xabcdefg"
+
+meta def my_tree_format : my_tree → format
+| (node none)           := "•"
+| (node $ some st)      := st
+| (join xs none)        := "•" ++ format.line ++ format.line ++ format.join (xs.map my_tree_format)
+| (join xs $ some st)   := st ++ format.line ++ format.line ++ format.join ((xs.map my_tree_format).intersperse "   ")
+
+meta instance : has_to_format my_tree := ⟨my_tree_format⟩
+
+-- run_cmd tactic.trace example_tree
+
+run_cmd (delimiter "(" ")").run' "(a b c (d e)) f g"
+
+meta def my_tree_parser : parser_tactic my_tree := mk my_tree_parser₁
+
+run_cmd (return example_tree : parser_tactic my_tree).run' "ab"
+
+run_cmd my_tree_parser.run' "( a )"
+run_cmd my_tree_parser.run' "(a,b,c)"
+run_cmd my_tree_parser.run' "(a,(b,c))"
+run_cmd my_tree_parser.run' "((a,b),c)"
+
+--TODO(jesse) debug this
+
+end parse_tree_from_list

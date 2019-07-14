@@ -12,6 +12,8 @@ import tactic category.traversable tactic.slice -- .fol' .parse_formula'
 
 import init.data.string tactic.explode
 
+#check lean.parser
+
 section miscellany
 
 lemma forall_iff_of_eq {α} {P Q : α → Prop} (h : P = Q) : (∀ x, P x ↔ Q x) :=
@@ -437,6 +439,10 @@ Upon encountering a copy of `arg_right`, it calls itself, decrementing the count
 
 If it never encounters an opening `arg_left`, it returns the empty string.
 -/
+
+/-
+running delimiter on (foo (bar )) baz produces (foo (bar )).
+-/
 /-
 TODO(jesse) refactor this to consume extra characters to the right instead of left
 -/
@@ -563,6 +569,8 @@ run_cmd run' (repeat (str "foo")) "barfoofoobarbarbarfoo"
 run_cmd run' (repeat1 (str "foo")) "foofoofoobarbarbarfoo" 
 
 run_cmd run' (str "foo") "foobarbaz"  -- (foo, barbaz)
+
+run_cmd run' (repeat $ fail_if_nil $ token $ not_whitespace) "foo₁ foo₂ foo₃ foo₄ foo₅"
 
 run_cmd (repeat $ str "a" <|> str "b").run' "bbababbaabaaaa" -- if one branch fails, the state is unchanged and passed to the other branch
 

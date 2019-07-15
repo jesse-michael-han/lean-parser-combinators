@@ -161,6 +161,12 @@ meta def lift {α} (val : tactic α) : parser_tactic α := state_t.lift val
 meta def run (p : parser_tactic α) : string → tactic (α × string) :=
 state_t.run p
 
+meta def result (p : parser_tactic α) (arg : string) : tactic α :=
+p.run arg >>= return ∘ prod.fst
+
+meta def get_result [has_reflect α] (p : parser_tactic α) (arg : string) : tactic unit :=
+p.result arg >>= λ x, tactic.exact (reflect x)
+
 /--
 `run parser p arg` runs `p` as if `arg` were the current state.
 
@@ -929,10 +935,23 @@ end calculator
 
 section parse_tree_from_list
 
-inductive my_tree : Type
+inductive my_tree
 | node : option string → my_tree
 | join : list my_tree → option string → my_tree
+
 open my_tree
+
+-- def list.reflect {α} [has_reflect α] : has_reflect $ list α :=
+-- begin
+--   sorry
+-- end
+
+
+
+
+meta instance my_tree.reflect : has_reflect my_tree
+| (node arg)           := `(λ x, node x).subst `(arg)
+| (join xs arg)        := (`(λ xs s, join xs s).subst (by haveI := my_tree.reflect; exact list.reflect xs)).subst `(arg)
 
 meta def my_tree_format : my_tree → format
 | (node none)           := "• "
@@ -965,6 +984,10 @@ with my_tree_parser₂ : string → tactic (list my_tree × string)
 
 meta def my_tree_parser : parser_tactic my_tree := mk my_tree_parser₁
 
+def my_parse_tree : my_tree := by my_tree_parser.get_result "(a,b,c)"
+
+#eval (to_fmt my_parse_tree).to_string
+/- {• || a   |  b   |  c } -/
 run_cmd my_tree_parser.run' "(a, b, c)"
 /- {• || a   |  b   |  c } -/
 run_cmd my_tree_parser.run' "(a,(b,c))"
@@ -981,9 +1004,30 @@ def example_tree : my_tree := join [node none, node none, node none] "foo"
 
 def example_tree2 : my_tree := join [join [node "a", node "b"] none, node "foo"] "bar"
 
-run_cmd (return example_tree : parser_tactic my_tree).run' "ab"
-run_cmd (return example_tree2: parser_tactic my_tree).run' "ab"
+run_cmd (return example_tree  : parser_tactic my_tree).run' "ab"
+run_cmd (return example_tree2 : parser_tactic my_tree).run' "ab"
 
 end formatting_tests
 
 end parse_tree_from_list
+
+section tdop
+/- Top-down operator-precedence parsing -/
+
+structure Tokens :=
+(tks   : Type)
+(prec  : tks → ℕ)
+
+inductive arith_tks : Type
+| plus : arith_tks
+| mul  : arith_tks
+
+def arith_Tokens : Tokens :=
+{ tks := arith_tks,
+  prec := arith_tks.rec 10 15 }
+
+inductive tdop_parse_tree (Tks : Tokens) : Type
+| node : Tks.tks → tdop_parse_tree
+| join : list tdop_parse_tree → Tks.tks → tdop_parse_tree
+
+end tdop

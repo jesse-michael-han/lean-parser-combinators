@@ -4,6 +4,10 @@ This repository contains an implementation in Lean 3 of monadic [[https://en.wik
 
 We make some modifications: parsers are a special case of ~state_t~ and we replace the list monad with the tactic monad.
 
+** Examples
+
+*** Parsing arithmetic expressions
+
 For comparison, here is the final example from the paper (a parser for evaluating arithmetic expressions), redone in Lean:
 
 #+begin_src lean
@@ -28,4 +32,42 @@ run_cmd calculator.run' "(2 * (3 + 5 + (2 * 2)))"
 
 run_cmd calculator.run' "9 - 9 * 0 * 3 + 4 - 7"
 -- 6
+#+end_src
+
+*** Parsing lists into trees
+
+To demonstrate the flexibility of parser combinators, it's quite easy to adapt the technique in the previous example to build a parser which constructs a labelled tree from an arbitrarily nested list:
+
+#+begin_src lean
+inductive my_tree : Type
+| node : option string → my_tree
+| join : list my_tree → option string → my_tree
+open my_tree
+
+meta instance : has_to_format my_tree := ⟨my_tree_format⟩
+
+meta mutual def my_tree_parser₁,my_tree_parser₂
+with my_tree_parser₁ : string → tactic (my_tree × string)
+| arg := ((do int <- (fail_if_nil $ delimiter'' "(" ")"),
+               ts  <- (run_parser (mk my_tree_parser₂) int),
+               return (my_tree.join ts none))
+            <|>
+           (do x <- not_str ",",
+               return $ my_tree.node x)).run arg
+with my_tree_parser₂ : string → tactic (list my_tree × string)
+| arg := (sepby (mk my_tree_parser₁) (symb ",")).run arg
+
+meta def my_tree_parser : parser_tactic my_tree := mk my_tree_parser₁
+
+run_cmd my_tree_parser.run' "(a, b, c)"
+/- {• || a   |  b   |  c } -/
+
+run_cmd my_tree_parser.run' "(a,(b,c))"
+/- {• || a   |  {• || b   |  c }} -/
+
+run_cmd my_tree_parser.run' "((a,b),c)"
+/- {• || {• || a   |  b }  |  c } -/
+
+run_cmd my_tree_parser.run' "(a, b, c, (d, e), f)"
+/- {• || a   |  b   |  c   |  {• || d   |  e }  |  f } -/
 #+end_src

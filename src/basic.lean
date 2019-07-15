@@ -973,7 +973,7 @@ run_cmd my_tree_parser.run' "(a,(b,c))"
 run_cmd my_tree_parser.run' "((a,b),c)"
 /- {• || {• || a   |  b }  |  c } -/
 run_cmd my_tree_parser.run' "(a, b, c, (d, e), f)"
-/- {• || a   |  b   |  c   |  {• || d   |  e }} -/
+/- {• || a   |  b   |  c   |  {• || d   |  e }  |  f } -/
 
 section formatting_tests
 

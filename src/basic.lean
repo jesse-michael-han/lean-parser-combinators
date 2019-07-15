@@ -936,12 +936,11 @@ open my_tree
 
 meta def my_tree_format : my_tree → format
 | (node none)           := "• "
-| (node $ some st)      := st ++ " "
+| (node $ some st)      := sformat!"{st} "
 | (join xs none)        := "{• || " ++ format.join ((xs.map my_tree_format).intersperse "  |  ") ++ "}"
-| (join xs $ some st)   := " {" ++ st ++ " || " ++ format.join ((xs.map my_tree_format).intersperse "  |  ") ++ "}"
+| (join xs $ some st)   := "{" ++ sformat!"{st} || " ++ " || " ++ format.join ((xs.map my_tree_format).intersperse "  |  ") ++ "}"
 
 meta instance : has_to_format my_tree := ⟨my_tree_format⟩
-
 
 /-
 (a, b, c, (d, e), f) should be parsed as

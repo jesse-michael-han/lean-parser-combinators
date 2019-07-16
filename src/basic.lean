@@ -330,6 +330,9 @@ meta def nil_if_fail {α} : parser_tactic α → parser_tactic (list α) :=
 meta def fail_if_nil : parser_tactic string → parser_tactic string :=
 λ p, do x <- p, guard (x ≠ ""), return x
 
+meta def fail_if_nil' {α} [decidable_eq α] : parser_tactic (list α) → parser_tactic (list α) :=
+λ p, do x <- p, guard (x ≠ []), return x
+
 meta def fail_if_state_nil {α} (p : parser_tactic α) : parser_tactic α :=
 (get_state >>= λ arg, guard (arg ≠ "")) >> p
 
@@ -438,6 +441,31 @@ meta def alphanumeric_token : parser_tactic string :=
 string.append <$> (sat char.is_alpha) <*> (repeat (sat char.is_alphanum) <* whitespace)
 
 meta def digit : parser_tactic char  := chs char.numeric
+
+def from_base_10_aux : ℕ → list ℕ → ℕ
+| _      []          := 0
+| 0      (x::xs)     := x
+| (n+1)  (x::xs)     := (10^n) * x + from_base_10_aux n xs
+
+def from_base_10 : list ℕ → ℕ := λ xs, from_base_10_aux xs.length xs
+
+meta def digit' : parser_tactic ℕ :=
+do x <- digit,
+   if (x = '0') then return 0 else
+   if (x = '1') then return 1 else
+   if (x = '2') then return 2 else
+   if (x = '3') then return 3 else
+   if (x = '4') then return 4 else
+   if (x = '5') then return 5 else
+   if (x = '6') then return 6 else
+   if (x = '7') then return 7 else
+   if (x = '8') then return 8 else
+   if (x = '9') then return 9 else
+   fail
+
+meta def number' : parser_tactic ℕ := (repeat digit') >>= return ∘ from_base_10
+
+meta def number : parser_tactic ℕ := (fail_if_nil' (repeat digit')) >>= return ∘ from_base_10
 
 /--
 `delimiter_aux arg_left arg_right k` believes that it has passed `k` copies of `arg_left`, and is expecting `k` copies of `arg_right`.
@@ -598,31 +626,8 @@ section arith_expr
 
 open arith_expr
 
-def from_base_10_aux : ℕ → list ℕ → ℕ
-| _      []          := 0
-| 0      (x::xs)     := x
-| (n+1)  (x::xs)     := (10^n) * x + from_base_10_aux n xs
-
-def from_base_10 : list ℕ → ℕ := λ xs, from_base_10_aux xs.length xs
-
-meta def digit' : parser_tactic ℕ :=
-do x <- digit,
-   if (x = '0') then return 0 else
-   if (x = '1') then return 1 else
-   if (x = '2') then return 2 else
-   if (x = '3') then return 3 else
-   if (x = '4') then return 4 else
-   if (x = '5') then return 5 else
-   if (x = '6') then return 6 else
-   if (x = '7') then return 7 else
-   if (x = '8') then return 8 else
-   if (x = '9') then return 9 else
-   fail
-
-meta def number : parser_tactic ℕ := (repeat digit') >>= return ∘ from_base_10
-
 meta def parse_number (arg : string) : tactic unit :=
-do n <- number.to_tactic arg,
+do n <- number'.to_tactic arg,
    tactic.exact `(n)
 
 mutual inductive addop,mulop,digit,factor,term,expr
@@ -1011,23 +1016,118 @@ end formatting_tests
 
 end parse_tree_from_list
 
-section tdop
-/- Top-down operator-precedence parsing -/
+section tdop1
+/- Top-down operator-precedence parsing, but with tokens hard-coded as their own inductive types -/
 
 structure Tokens :=
 (tks   : Type)
 (prec  : tks → ℕ)
 
+@[derive has_reflect, derive decidable_eq]
 inductive arith_tks : Type
+| of_nat : ℕ → arith_tks
 | plus : arith_tks
 | mul  : arith_tks
+export arith_tks
+
+meta def arith_tks.to_format : arith_tks → format := λ x, arith_tks.cases_on x (λ n, (to_fmt n)) (to_fmt "+") (to_fmt "*")
+
+meta instance arith_tks.has_to_format : has_to_format arith_tks :=
+⟨arith_tks.to_format⟩
+
+instance : has_coe ℕ arith_tks :=
+⟨of_nat⟩
 
 def arith_Tokens : Tokens :=
 { tks := arith_tks,
-  prec := arith_tks.rec 10 15 }
+  prec := arith_tks.rec (λ _, 0) 10 15 }
+
+instance arith_tks_Tokens_coe : has_coe arith_tks arith_Tokens.tks := ⟨id⟩
 
 inductive tdop_parse_tree (Tks : Tokens) : Type
 | node : Tks.tks → tdop_parse_tree
 | join : list tdop_parse_tree → Tks.tks → tdop_parse_tree
+export tdop_parse_tree
 
-end tdop
+meta instance arith_tree_reflect : Π τ : tdop_parse_tree arith_Tokens, reflected τ
+| (node l)                  := `(λ x, node x).subst `(l)
+| (join τs l)               := (λ y, `(λ x, join x y).subst (by {haveI := arith_tree_reflect, exact (list.reflect τs)})) l
+
+def tdop_parse_tree.make_branch {Tks : Tokens} (τ : tdop_parse_tree Tks) (τ₀ : tdop_parse_tree Tks) : tdop_parse_tree Tks :=
+begin
+  induction τ with n j label,
+    { exact tdop_parse_tree.join ([τ₀]) n },
+    { exact join (τ₀ :: j) label }
+end
+
+def tdop_parse_tree.insert {Tks : Tokens} (τ : tdop_parse_tree Tks) (tk : Tks.tks) : tdop_parse_tree Tks :=
+τ.make_branch (node tk)
+
+def my_tdop_parse_tree : tdop_parse_tree arith_Tokens :=
+join [node (1 : ℕ), node (2 : ℕ)] plus
+
+meta def of.mk {α : Type} [has_reflect α] {Tks : Tokens} (Tks_eval : (tdop_parse_tree Tks) → tactic α) (τ : tdop_parse_tree Tks) : tactic unit :=
+do a <- (Tks_eval τ), tactic.exact `(a)
+
+section arith_eval
+
+instance : has_add $ option ℕ :=
+⟨λ k₁ k₂,
+option.cases_on k₁ (option.cases_on k₂ none (λ _, none)) (option.cases_on k₂ (λ _, none) (λ n₁ n₂, return $ n₁ + n₂))⟩
+
+instance : has_mul $ option ℕ :=
+⟨λ k₁ k₂,
+option.cases_on k₁ (option.cases_on k₂ none (λ _, none)) (option.cases_on k₂ (λ _, none) (λ n₁ n₂, return $ n₁ * n₂))⟩
+
+meta def arith_Tokens_eval : tdop_parse_tree arith_Tokens → option ℕ
+| (node arg) := arith_tks.cases_on arg pure none none
+| (join xs arg) := arith_tks.cases_on arg (λ _, none) ((xs.map arith_Tokens_eval).foldr (+) (some 0)) ((xs.map arith_Tokens_eval).foldr (*) (some 0))
+
+meta def of_arith_Tokens : tdop_parse_tree arith_Tokens → tactic unit :=
+of.mk (λ x, arith_Tokens_eval x)
+
+meta def my_three : ℕ := by of_arith_Tokens my_tdop_parse_tree
+
+#eval my_three -- 3
+
+end arith_eval
+
+meta def arith_tks.parse : parser_tactic arith_tks := 
+     ((do n <- number, return n) <* whitespace)
+ <|> (token (str "+") >> return plus)
+ <|> (token (str "*") >> return mul)
+
+-- run_cmd (repeat $ arith_tks.parse).run' "1 + 3 + 5 * 2"
+
+meta def parse_nat : Π (left : tdop_parse_tree arith_Tokens), string → tactic (tdop_parse_tree arith_Tokens × string)
+| left arg := (do n <- (token number), return (left.insert (of_nat n))).run arg
+
+meta def parse_plus : Π (left : tdop_parse_tree arith_Tokens), string → tactic (tdop_parse_tree arith_Tokens × string)
+| left arg := (token (str "+") >> return ((node plus : tdop_parse_tree arith_Tokens).make_branch left)).run arg
+
+meta def parse_mul  : Π (left : tdop_parse_tree arith_Tokens), string → tactic (tdop_parse_tree arith_Tokens × string)
+| left arg := (token (str "*") >> return ((node mul : tdop_parse_tree arith_Tokens).make_branch left)).run arg
+
+meta def arith_tdop_parser' : Π (left : tdop_parse_tree arith_Tokens), parser_tactic (tdop_parse_tree arith_Tokens)
+| left := (mk $ parse_nat left) <|> (mk $ parse_plus left) <|> (mk $ parse_mul left)
+
+meta def arith_tdop_parser_aux : Π flag : bool, Π result : tdop_parse_tree arith_Tokens,  parser_tactic (tdop_parse_tree arith_Tokens)
+| ff _ := arith_tdop_parser' (node $ of_nat 0) >>= arith_tdop_parser_aux tt
+| tt τ := (arith_tdop_parser' τ >>= arith_tdop_parser_aux tt) <|> return τ
+
+meta def arith_tdop_parser : parser_tactic (tdop_parse_tree arith_Tokens)
+:= arith_tdop_parser_aux ff (node $ of_nat 0) 
+
+meta def tdop_arith.to_format : (tdop_parse_tree arith_Tokens) → format
+| (node l) := arith_tks.to_format l
+| (join τs l) := "( " ++ (tdop_arith.to_format $ node l) ++ " || " ++ (string.join (((τs.map tdop_arith.to_format).map format.to_string).intersperse " ,")) ++ ")"
+
+meta instance tdop_parse_to_format : has_to_format (tdop_parse_tree arith_Tokens) := ⟨tdop_arith.to_format⟩
+
+run_cmd (do arith_tdop_parser' (node $ of_nat 0) >>= arith_tdop_parser' >>= arith_tdop_parser').run' "1 + 2"
+
+--TODO(jesse) fix this
+run_cmd (arith_tdop_parser).run' "1 + 2 + 3 * 4 + 5"
+
+
+end tdop1

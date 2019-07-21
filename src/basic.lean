@@ -582,6 +582,8 @@ run_cmd (fail_if_nil $ str "h").run' "hewwo" -- succeeds as it should
 
 -- run_cmd run' (fail_if_state_nil $ skip) "" -- fails as it should
 
+run_cmd (sepby (str "a" <|> str "b") (str ",")).run' "a,b,c,d"
+
 run_cmd run' (fail_if_state_nil $ skip) "foo" -- succeeds as it should
 
 run_cmd run' (delimiter "(" ")") "(1 + 2) + 3"
@@ -610,7 +612,7 @@ run_cmd run' (repeat1 (str "foo")) "foofoofoobarbarbarfoo"
 
 run_cmd run' (str "foo") "foobarbaz"  -- (foo, barbaz)
 
-run_cmd run' (repeat $ fail_if_nil $ token $ not_whitespace) "foo₁ foo₂ foo₃ foo₄ foo₅"
+run_cmd run' (repeat1 $ fail_if_nil $ token $ not_whitespace) "foo₁ foo₂ foo₃ foo₄ foo₅"
 
 run_cmd (repeat $ str "a" <|> str "b").run' "bbababbaabaaaa" -- if one branch fails, the state is unchanged and passed to the other branch
 
@@ -991,6 +993,8 @@ meta def my_tree_parser : parser_tactic my_tree := mk my_tree_parser₁
 
 def my_parse_tree : my_tree := by my_tree_parser.get_result "(a,b,c)"
 
+#print my_parse_tree
+
 #eval (to_fmt my_parse_tree).to_string
 /- {• || a   |  b   |  c } -/
 run_cmd my_tree_parser.run' "(a, b, c)"
@@ -1128,6 +1132,5 @@ run_cmd (do arith_tdop_parser' (node $ of_nat 0) >>= arith_tdop_parser' >>= arit
 
 --TODO(jesse) fix this
 run_cmd (arith_tdop_parser).run' "1 + 2 + 3 * 4 + 5"
-
 
 end tdop1

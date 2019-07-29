@@ -144,7 +144,6 @@ def reverse (arg : string) : string :=
 
 end string
 
-
 @[reducible]meta def parser' := state_t string
 
 meta def parser_tactic := parser' tactic
@@ -191,6 +190,18 @@ parser_tactic.mk $ λ str, tactic.trace str >> return ((), str)
 
 meta def get_state : parser_tactic string :=
 state_t.get
+
+meta def put_state : string -> parser_tactic unit :=
+λ arg, state_t.put arg
+
+meta def modify_state : (string -> string) -> parser_tactic unit :=
+λ m, state_t.modify m
+
+meta def prepend_state : string -> parser_tactic unit :=
+λ arg, modify_state (λ σ, arg ++ σ)
+
+meta def append_state : string -> parser_tactic unit :=
+λ arg, modify_state (λ σ, σ ++ arg)
 
 meta def run_parser' (p : parser_tactic α) : parser_tactic string → parser_tactic α :=
 λ q, q >>= run_parser p
@@ -245,6 +256,13 @@ parser_tactic.mk $ λ str,
   match str with
   | ⟨[]⟩      := tactic.failed
   | ⟨(x::xs)⟩ := return (x, ⟨xs⟩)
+  end
+
+meta def eof : parser_tactic unit :=
+parser_tactic.mk $ λ str,
+  match str with
+  | ⟨[]⟩ := return ⟨(), str⟩
+  | ⟨(x::xs)⟩ := tactic.failed
   end
 
 /--
@@ -348,16 +366,44 @@ meta def repeat1 {α : Type} : parser_tactic α → parser_tactic (list α) :=
 λ p, list.cons <$> p <*> repeat p
 
 /--
-`succeeds' p` runs p, but does not change the state.
+`succeeds' p` runs p, but does not change the state even if p succeeds.
 -/
 meta def succeeds' {α} (p : parser_tactic α) : parser_tactic bool :=
 succeeds $ get_state >>= (run_parser p)
 
+meta def fail_iff_succeeds {α} (p : parser_tactic α) : parser_tactic unit :=
+succeeds' p >>= λ b, ite b fail skip
+
+/--
+`until p q` runs q until p succeeds, and returns the result of p and all the results of q
+-/
+meta def until {α β} (p : parser_tactic α) (q : parser_tactic β) : parser_tactic (α × list β) :=
+   repeat (fail_iff_succeeds p *> q) >>= λ _, prod.mk <$> p <*> return ‹_›
+
+/--
+`until' p q` runs q until p succeeds, and returns the result of p
+-/
+meta def until' {α β} (p : parser_tactic α) (q : parser_tactic β) : parser_tactic α :=
+prod.fst <$> until p q
+
+/--
+`until'' p q` runs q until p succeeds, and returns all results of q
+-/   
+meta def until'' {α β} (p : parser_tactic α) (q : parser_tactic β) : parser_tactic (list β) :=
+prod.snd <$> until p q
+
+/--
+`lookahead arg` succeeds if and only if `arg` is a substring of the current state
+-/
+meta def lookahead (arg : string) : parser_tactic string :=
+until' (str arg) item
+
+run_cmd (lookahead "foo").run' "abcfoode"
 /--
 `not_str arg` consumes and returns the longest prefix which does not match `arg`.
 -/
 meta def not_str : string → parser_tactic string := λ arg,
-repeat $ (succeeds $ str arg) >>= (λ b, if b then fail else item)
+until'' (str arg) item
 
 meta def not_strs : list string → parser_tactic string := λ arg,
 repeat $ succeeds (list.mfirst str arg) >>= (λ b, if b then fail else item)
@@ -575,6 +621,10 @@ meta def case_insensitive (p : string → parser_tactic string) : string → par
 -- end parse_fol
 
 section tests
+
+run_cmd (until' (str "bar") item : parser_tactic string).run' "foo bar baz"
+
+run_cmd (str "foobar" <* eof).run' "foobar"
 
 run_cmd (fail_if_nil $ str "h").run' "hewwo" -- succeeds as it should
 

@@ -8,9 +8,9 @@ Monadic parsing in Lean, following Hutton-Meijer's 'Monadic Parsing in Haskell` 
 A related implementation for character buffers, due to Gabriel Ebner, is in data.buffer.
 -/
 
-import tactic category.traversable tactic.slice -- .fol' .parse_formula'
+import tactic
 
-import init.data.string tactic.explode
+import init.data.string
 
 section miscellany
 
@@ -438,7 +438,7 @@ meta def symb : string → parser_tactic string := token ∘ str
 
 /-- An alphanumeric token is a string of alphanumeric characters which must begin with an alpha character. -/
 meta def alphanumeric_token : parser_tactic string :=
-string.append <$> (sat char.is_alpha) <*> (repeat (sat char.is_alphanum) <* whitespace)
+(string.append <$> (sat char.is_alpha) <*> (repeat (sat char.is_alphanum))) <* whitespace
 
 meta def digit : parser_tactic char  := chs char.numeric
 

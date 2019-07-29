@@ -395,8 +395,8 @@ prod.snd <$> until p q
 /--
 `lookahead arg` succeeds if and only if `arg` is a substring of the current state
 -/
-meta def lookahead (arg : string) : parser_tactic string :=
-until' (str arg) item
+meta def lookahead (arg : string) : parser_tactic bool :=
+succeeds' $ until' (str arg) item
 
 run_cmd (lookahead "foo").run' "abcfoode"
 /--
@@ -472,7 +472,7 @@ meta def space : parser_tactic string := repeat (sat (= ' '))
 
 meta def whitespace : parser_tactic string := repeat (chs char.whitespace_chars)
 
-meta def not_whitespace : parser_tactic string := repeat (not_chs char.whitespace_chars)
+meta def not_whitespace : parser_tactic string := fail_if_nil $ repeat (not_chs char.whitespace_chars)
 
 /-- `token p` runs p, then consumes as many spaces as possible before discarding them. -/
 meta def token {α} (p : parser_tactic α) : parser_tactic α := p <* space
@@ -1070,6 +1070,7 @@ end formatting_tests
 
 end parse_tree_from_list
 
+namespace tdop
 section tdop1
 /- Top-down operator-precedence parsing, but with tokens hard-coded as their own inductive types -/
 
@@ -1184,3 +1185,4 @@ run_cmd (do arith_tdop_parser' (node $ of_nat 0) >>= arith_tdop_parser' >>= arit
 run_cmd (arith_tdop_parser).run' "1 + 2 + 3 * 4 + 5"
 
 end tdop1
+end tdop

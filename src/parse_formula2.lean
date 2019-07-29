@@ -472,19 +472,63 @@ meta def parse_preterm : Π {k}, parser_tactic $ preterm L_empty k
 
 meta def parse_term := @parse_preterm 0
 
--- note(jesse): for non-empty languages, need parsers parametrized over the function and relation symbols
-meta def parse_preformula : Π {k},  parser_tactic $ preformula L_empty k
-| 0 := (preformula.all <$> ((token $ str "∀") *> @parse_preformula 0) <|> 
-       (token $ str "⊥") *> return preformula.falsum <|>
-       preformula.equal <$> @parse_preterm 0 <* (token $ str "=") <*> @parse_preterm 0 <|>
-       chainl1 (parse_preformula) (return preformula.imp)) <* whitespace -- TODO(jesse) eliminate the recursive call
-| (n+1) := fail
+-- -- note(jesse): for non-empty languages, need parsers parametrized over the function and relation symbols
+-- meta def parse_preformula : Π {k},  parser_tactic $ preformula L_empty k
+-- | 0 := (-- preformula.all <$> ((token $ str "∀") *> @parse_preformula 0) <|> 
+-- do b <- lookahead "⟹",
+--           if b then preformula.imp <$> (@parse_preformula 0) <*>(@parse_preformula 0)
+--                else fail <|>
+--        (token $ str "⊥") *> return preformula.falsum <|>
+--        preformula.equal <$> @parse_preterm 0 <* (token $ str "=") <*> @parse_preterm 0) <* whitespace -- TODO(jesse) eliminate the recursive call
+-- | (n+1) := fail
 
-meta def parse_formula := @parse_preformula 0
+-- meta def parse_formula := @parse_preformula 0
 
-def my_eq : preformula L_empty 0 := by (preformula.equal <$> @parse_preterm 0 <* (token $ str "=") <*> @parse_preterm 0).get_result "a = a"
+-- a ⟹ (b ⟹ (c ⟹ d)) -- let's assume that implication associates to the right
 
-#reduce my_eq -- &0 ≃ &0
+-- gets parsed as
+-- app "imp" [leaf "a", app "imp" [leaf "b", app "imp" ["leaf c", leaf "d"]]]
+
+inductive tree (α : Type) : Type
+| leaf (a : α) : tree
+| app (l : option α) (ts : list tree) : tree
+open tree
+
+def add_subtree {α} : ∀ (t : tree α) (t' : tree α), tree α
+| (leaf a) t' := app none [t', leaf a]
+| (app l ts) t' := app l $ t' :: ts
+
+def add_parent {α} : ∀ (t : tree α) (a : option α), tree α :=
+λ t a, app a [t]
+
+def imp_handler (arg : string) (t : tree string) : tree string :=
+if arg = "⟹" then add_parent t (some arg) else add_subtree t (leaf arg)
+
+-- meta def parse_imp_aux : tree string → (parser_tactic $ tree string) :=
+-- λ t, do
+--   imp_handler <$> return t <*> (token $ not_whitespace)
+
+meta def parse_imp : (parser_tactic $ tree string) :=
+do  x <- token not_whitespace,
+    (imp_handler <$> return x <*> parse_imp) <|> return (leaf x)
+
+meta instance tree_string_reflect : has_reflect (tree string)
+| (leaf arg) := `(λ x, leaf x).subst `(arg)
+| (app l ts) := (`(λ x y, tree.app x y).subst `(l)).subst (by haveI := tree_string_reflect; exact list.reflect ts)
+  
+def my_tree' : tree string := by (parse_imp).get_result "a ⟹ b ⟹ c ⟹ d"
+
+#print my_tree'
+
+-- def my_eq : preformula L_empty 0 := by (preformula.equal <$> @parse_preterm 0 <* (token $ str "=") <*> @parse_preterm 0).get_result "a = a"
+
+-- def my_falsum : preformula L_empty 0 := by parse_formula.get_result "a = a ⟹ a = b"
+
+-- #reduce my_falsum
+
+-- def foo := by (preformula.all <$> (symb "∀" *> eof)).get_result "∀"
+
+-- #reduce my_eq -- &0 ≃ &0
        
 -- def foo : preterm L_empty 0 := by parse_term.get_result "f1"
 
@@ -499,5 +543,3 @@ def my_eq : preformula L_empty 0 := by (preformula.equal <$> @parse_preterm 0 <*
 -- #eval by (token $ str "=").get_result "="
 
 -- #reduce "foo"
-
-

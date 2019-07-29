@@ -5,5 +5,5 @@ lean_version = "3.4.2"
 path = "src"
 
 [dependencies]
-mathlib = {git = "https://github.com/leanprover-community/mathlib", rev = "3d36966eecba5d4846ee2536b43e575d2530510f"}
+mathlib = {git = "https://github.com/leanprover-community/mathlib", rev = "9689f4d59769531f6b6f90fca4f455f52271c284"}
 flypitch = {git = "https://github.com/flypitch/flypitch", rev = "ffd4ff5152a7ccb170accf7709be734e69c3d98d"}
